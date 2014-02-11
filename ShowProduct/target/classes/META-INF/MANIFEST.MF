@@ -1,0 +1,6 @@
+Manifest-Version: 1.0
+Built-By: Gordon Bosch
+Build-Jdk: 1.7.0_51
+Main-Class: Main
+Created-By: Maven Integration for Eclipse
+
