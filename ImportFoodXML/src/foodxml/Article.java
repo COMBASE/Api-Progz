@@ -33,6 +33,9 @@ public class Article
 	
 	private Text status;
 	
+	@XmlAttribute(name="available_from")
+	private String available_from;
+	
 	@XmlElement(name="prices")
 	private Prices prices;
 	
@@ -296,6 +299,16 @@ public class Article
 	public void setUrl(String url)
 	{
 		this.url = url;
+	}
+
+	public String getAvailable_from()
+	{
+		return available_from;
+	}
+
+	public void setAvailable_from(String available_from)
+	{
+		this.available_from = available_from;
 	}
 
 }

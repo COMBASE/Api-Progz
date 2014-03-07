@@ -22,8 +22,24 @@ import link.CloudLink;
 
 import org.codehaus.jettison.json.JSONException;
 
-import domain.*;
-import foodxml.*;
+import domain.Assortment;
+import domain.CommodityGroup;
+import domain.DataType;
+import domain.EconomicZone;
+import domain.Pricelist;
+import domain.Product;
+import domain.ProductText_Type;
+import domain.Product_Code;
+import domain.Product_Text;
+import domain.Rate;
+import domain.Sector;
+import domain.Tax;
+import foodxml.Allergenic;
+import foodxml.Article;
+import foodxml.Catalog;
+import foodxml.Foodxml;
+import foodxml.Group;
+import foodxml.Item;
 
 /**
  * Copyright 2013 COMBASE AG
@@ -39,15 +55,12 @@ public class FoodXmlParser
 	private static Assortment assortment = new Assortment.Builder("Bäck2Office").build();
 	private static EconomicZone ecozone = new EconomicZone("Deutschland");
 	private static final SimpleDateFormat inputDf = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss");
-	private static int grpnr = 1;
 
-	public static void parse(String filePath) throws JAXBException, JSONException, IOException
+	public static void parse(String filePath) throws JAXBException, JSONException, IOException, ParseException
 	{
 		articles = new ArrayList<Article>();
 		articles_final = new ArrayList<Product>();
 		File f = new File(filePath);
-		// InputStream resourceAsStream =
-// FoodXmlParser.class.getResourceAsStream(filePath);//testFood.xml || foodxml2.xml
 		FileInputStream fis = new FileInputStream(f);
 		Scanner scanner = new Scanner(fis, "UTF-8");
 		String xml = scanner.useDelimiter("\\A").next().replaceAll("<br>", "");
@@ -62,7 +75,7 @@ public class FoodXmlParser
 		articles.clear();
 	}
 
-	private static void getSubHTTPData() throws IOException, JAXBException
+	private static void getSubHTTPData() throws IOException, JAXBException, ParseException
 	{
 		for (Article prod : articles)
 		{
@@ -80,15 +93,23 @@ public class FoodXmlParser
 
 	}
 
-	private static Product transform(Article elem)
+	private static Product transform(Article elem) throws ParseException
 	{
-		Product prod = new Product.Builder(elem.getMatchcode().getText()).activeAssortment(
+		Product prod = new Product.Builder(elem.getArticle_names().getNames().gettextbylang("DEU").getText()).activeAssortment(
 			elem.isAssortment())
-			.activeAssortmentFrom(new Date())
+			.activeAssortmentFrom(((elem.getAvailable_from() != null) ? inputDf.parse(elem.getAvailable_from()) : new Date()))
 			.discountable(!elem.isNo_discount())
 			.commodityGroup(commgroups.get(elem.getGroup_unique_idref()))
 			.assortment(assortment)
 			.build();
+		
+		if(elem.getEan() != null)
+		{
+			List<Product_Code> codes = new ArrayList<Product_Code>();
+			codes.add(new Product_Code(elem.getEan(), BigDecimal.ONE));
+			prod.setCodes(codes);
+		}
+			
 
 		if (elem.getPrices() != null && elem.getPrices().getPriceList() != null)
 		{
@@ -208,8 +229,7 @@ public class FoodXmlParser
 				CommodityGroup grp = new CommodityGroup.Builder(group.getDetails()
 					.getNames()
 					.gettextbylang("DEU")
-					.getText()).number(grpnr).build();
-				grpnr++;
+					.getText()).build();
 				commgroups.put(group.getUnique_id(), grp);
 				collectArticlesfromGroup(group, grp);
 			}
@@ -232,8 +252,7 @@ public class FoodXmlParser
 				CommodityGroup grp = new CommodityGroup.Builder(subgroup.getDetails()
 					.getNames()
 					.gettextbylang("DEU")
-					.getText()).number(grpnr).parent(parent).build();
-				grpnr++;
+					.getText()).parent(parent).build();
 				parent.setHasChildren(true);
 				commgroups.put(subgroup.getUnique_id(), grp);
 				collectArticlesfromGroup(subgroup, grp);
