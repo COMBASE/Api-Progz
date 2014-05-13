@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 
-import javax.swing.JOptionPane;
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
 import javax.xml.bind.Unmarshaller;
@@ -56,23 +55,61 @@ public class FoodXmlParser
 	private static EconomicZone ecozone = new EconomicZone("Deutschland");
 	private static final SimpleDateFormat inputDf = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss");
 
-	public static void parse(String filePath) throws JAXBException, JSONException, IOException, ParseException
+	private static void collectArticles(final Catalog cog)
 	{
-		articles = new ArrayList<Article>();
-		articles_final = new ArrayList<Product>();
-		File f = new File(filePath);
-		FileInputStream fis = new FileInputStream(f);
-		Scanner scanner = new Scanner(fis, "UTF-8");
-		String xml = scanner.useDelimiter("\\A").next().replaceAll("<br>", "");
-		scanner.close();
-		StringBuffer xmlBuf = new StringBuffer(xml);
-		final JAXBContext context = JAXBContext.newInstance(Foodxml.class);
-		final Unmarshaller unmarshaller = context.createUnmarshaller();
-		final Foodxml fx = (Foodxml)unmarshaller.unmarshal(new StreamSource(new StringReader(
-			xmlBuf.toString())));
-		collectArticles(fx.getCatalog());
-		getSubHTTPData();
-		articles.clear();
+		if (cog.getArticles() != null)
+		{
+			for (final Article elem : cog.getArticles())
+			{
+				articles.add(elem);
+			}
+		}
+		if (cog.getGroups() != null)
+		{
+			for (final Group group : cog.getGroups())
+			{
+				final CommodityGroup grp = new CommodityGroup.Builder(group.getDetails()
+					.getNames()
+					.gettextbylang("DEU")
+					.getText()).number(Integer.valueOf(group.getUnique_id()).intValue()).build();
+				commgroups.put(group.getUnique_id(), grp);
+				collectArticlesfromGroup(group, grp);
+			}
+		}
+	}
+
+	private static void collectArticlesfromGroup(final Group group, final CommodityGroup parent)
+	{
+		if (group.getArticles() != null)
+		{
+			for (final Article elem : group.getArticles())
+			{
+				articles.add(elem);
+			}
+		}
+		if (group.getGroups() != null)
+		{
+			for (final Group subgroup : group.getGroups())
+			{
+				final CommodityGroup grp = new CommodityGroup.Builder(subgroup.getDetails()
+					.getNames()
+					.gettextbylang("DEU")
+					.getText()).number(Integer.valueOf(subgroup.getUnique_id()).intValue())
+					.parent(parent)
+					.build();
+				parent.setHasChildren(true);
+				commgroups.put(subgroup.getUnique_id(), grp);
+				collectArticlesfromGroup(subgroup, grp);
+			}
+		}
+	}
+
+	private static String getCurrency()
+	{
+		String s = new String();
+		s = CloudLink.getUUIDByName(DataType.currency, "Euro");
+
+		return s;
 	}
 
 	private static void getSubHTTPData() throws IOException, JAXBException, ParseException
@@ -81,7 +118,7 @@ public class FoodXmlParser
 		{
 			if (prod.getUrl() != null)
 			{
-				StringBuffer xml = XMLFetcher.fetchData(prod.getUrl());
+				final StringBuffer xml = XMLFetcher.fetchData(prod.getUrl());
 				final JAXBContext context = JAXBContext.newInstance(Foodxml.class);
 				final Unmarshaller unmarshaller = context.createUnmarshaller();
 				final Foodxml fx = (Foodxml)unmarshaller.unmarshal(new StreamSource(
@@ -93,44 +130,74 @@ public class FoodXmlParser
 
 	}
 
-	private static Product transform(Article elem) throws ParseException
+	public static void parse(final String filePath) throws JAXBException, JSONException,
+		IOException, ParseException
 	{
-		Product prod = new Product.Builder(elem.getArticle_names().getNames().gettextbylang("DEU").getText()).activeAssortment(
-			elem.isAssortment())
-			.activeAssortmentFrom(((elem.getAvailable_from() != null) ? inputDf.parse(elem.getAvailable_from()) : new Date()))
+		articles = new ArrayList<Article>();
+		articles_final = new ArrayList<Product>();
+		final File f = new File(filePath);
+		final FileInputStream fis = new FileInputStream(f);
+		final Scanner scanner = new Scanner(fis, "UTF-8");
+		final String xml = scanner.useDelimiter("\\A").next().replaceAll("<br>", "");
+		scanner.close();
+		final StringBuffer xmlBuf = new StringBuffer(xml);
+		final JAXBContext context = JAXBContext.newInstance(Foodxml.class);
+		final Unmarshaller unmarshaller = context.createUnmarshaller();
+		final Foodxml fx = (Foodxml)unmarshaller.unmarshal(new StreamSource(new StringReader(
+			xmlBuf.toString())));
+		collectArticles(fx.getCatalog());
+		getSubHTTPData();
+		articles.clear();
+	}
+
+	private static Product transform(final Article elem) throws ParseException
+	{
+		final String prodName = (elem.getArticle_names().getNames().gettextbylang("DEU").getText() == null || elem.getArticle_names()
+			.getNames()
+			.gettextbylang("DEU")
+			.getText()
+			.equals("")) ? elem.getMatchcode().getText() : elem.getArticle_names()
+			.getNames()
+			.gettextbylang("DEU")
+			.getText();
+		final Product prod = new Product.Builder(prodName).activeAssortment(elem.isAssortment())
+			.activeAssortmentFrom(
+				((elem.getAvailable_from() != null && !elem.getAvailable_from().equals("NULL"))
+					? inputDf.parse(elem.getAvailable_from()) : new Date()))
 			.discountable(!elem.isNo_discount())
 			.commodityGroup(commgroups.get(elem.getGroup_unique_idref()))
 			.assortment(assortment)
+			.number(Integer.valueOf(elem.getId()).intValue())
 			.build();
-		
-		if(elem.getEan() != null)
+
+		if (elem.getEan() != null && !elem.getEan().isEmpty())
 		{
-			List<Product_Code> codes = new ArrayList<Product_Code>();
+			final List<Product_Code> codes = new ArrayList<Product_Code>();
 			codes.add(new Product_Code(elem.getEan(), BigDecimal.ONE));
 			prod.setCodes(codes);
 		}
-			
+
 
 		if (elem.getPrices() != null && elem.getPrices().getPriceList() != null)
 		{
-			List<domain.Price> priceitems = new ArrayList<domain.Price>();
+			final List<domain.Price> priceitems = new ArrayList<domain.Price>();
 			int sec1 = 0;
 			int sec2 = 0;
-			for (foodxml.Price p : elem.getPrices().getPriceList())
+			for (final foodxml.Price p : elem.getPrices().getPriceList())
 			{
-				if (!priceLists.containsKey(p.getVat()))
+				if (!priceLists.containsKey(Float.valueOf(p.getVat())))
 				{
-					String currencyUUID = getCurrency();
-					if(currencyUUID.equals(null))
+					final String currencyUUID = getCurrency();
+					if (currencyUUID.equals(null))
 						return null;
-					Pricelist list = new Pricelist.Builder(String.valueOf(p.getVat()),
+					final Pricelist list = new Pricelist.Builder(String.valueOf(p.getVat()),
 						currencyUUID).build();
-					priceLists.put(p.getVat(), list);
-					Rate rate = new Rate(new BigDecimal(String.valueOf(p.getVat() * 100)),
+					priceLists.put(Float.valueOf(p.getVat()), list);
+					final Rate rate = new Rate(new BigDecimal(String.valueOf(p.getVat() * 100)),
 						new Date());
-					Tax tax = new Tax.Builder(String.valueOf(p.getVat()), ecozone).rateList(rate)
-						.build();
-					Sector sec = new Sector.Builder(String.valueOf(p.getVat())).taxlist(tax)
+					final Tax tax = new Tax.Builder(String.valueOf(p.getVat()), ecozone).rateList(
+						rate).build();
+					final Sector sec = new Sector.Builder(String.valueOf(p.getVat())).taxlist(tax)
 						.build();
 					sectorlist.add(sec);
 				}
@@ -145,12 +212,13 @@ public class FoodXmlParser
 				{
 					date = inputDf.parse(p.getValid_from());
 				}
-				catch (ParseException e)
+				catch (final ParseException e)
 				{
 					e.printStackTrace();
 				}
-				domain.Price item = new domain.Price(priceLists.get(p.getVat()), date,
-					new BigDecimal(String.valueOf(p.getItem().getValue())));
+				final domain.Price item = new domain.Price(
+					priceLists.get(Float.valueOf(p.getVat())), date, new BigDecimal(
+						String.valueOf(p.getItem().getValue())));
 				priceitems.add(item);
 			}
 			if (sec1 >= sec2)
@@ -169,7 +237,7 @@ public class FoodXmlParser
 			}
 			prod.setPrices(priceitems);
 		}
-		List<Product_Text> texts = new ArrayList<Product_Text>();
+		final List<Product_Text> texts = new ArrayList<Product_Text>();
 		texts.add(new Product_Text(elem.getArticle_names()
 			.getNames()
 			.gettextbylang("DEU")
@@ -177,8 +245,10 @@ public class FoodXmlParser
 		if (elem.getNutritional() != null && elem.getNutritional().getItemList() != null)
 		{
 			String nuts = "";
-			for (Item item : elem.getNutritional().getItemList())
+			for (final Item item : elem.getNutritional().getItemList())
 			{
+				if (!nuts.isEmpty())
+					nuts = nuts + "\r\n";
 				nuts = nuts + item.getText_text().gettextbylang("DEU").getText() + "=" +
 					item.getValue_100g() + item.getUnit() + " ";
 			}
@@ -187,8 +257,10 @@ public class FoodXmlParser
 		if (elem.getIngredients() != null && elem.getIngredients().getItemList() != null)
 		{
 			String ings = "";
-			for (Item item : elem.getIngredients().getItemList())
+			for (final Item item : elem.getIngredients().getItemList())
 			{
+				if (!ings.isEmpty())
+					ings = ings + "\r\n";
 				ings = ings + item.getMaterial_name().getMaterialbylang("DEU").getText() + " ";
 			}
 			texts.add(new Product_Text(ings, ProductText_Type.ingredients));
@@ -196,12 +268,14 @@ public class FoodXmlParser
 		if (elem.getAllergenics() != null && elem.getAllergenics().getAllergenic() != null)
 		{
 			String allergs = "";
-			for (Allergenic allg : elem.getAllergenics().getAllergenic())
+			for (final Allergenic allg : elem.getAllergenics().getAllergenic())
 			{
 				if (allg.getItemList() != null)
 				{
-					for (Item item : allg.getItemList())
+					for (final Item item : allg.getItemList())
 					{
+						if (!allergs.isEmpty())
+							allergs = allergs + "\r\n";
 						allergs = allergs + item.getText_text().gettextbylang("DEU").getText() +
 							" ";
 					}
@@ -211,70 +285,6 @@ public class FoodXmlParser
 		}
 		prod.setTexts(texts);
 		return prod;
-	}
-
-	private static void collectArticles(Catalog cog)
-	{
-		if (cog.getArticles() != null)
-		{
-			for (Article elem : cog.getArticles())
-			{
-				articles.add(elem);
-			}
-		}
-		if (cog.getGroups() != null)
-		{
-			for (Group group : cog.getGroups())
-			{
-				CommodityGroup grp = new CommodityGroup.Builder(group.getDetails()
-					.getNames()
-					.gettextbylang("DEU")
-					.getText()).build();
-				commgroups.put(group.getUnique_id(), grp);
-				collectArticlesfromGroup(group, grp);
-			}
-		}
-	}
-
-	private static void collectArticlesfromGroup(Group group, CommodityGroup parent)
-	{
-		if (group.getArticles() != null)
-		{
-			for (Article elem : group.getArticles())
-			{
-				articles.add(elem);
-			}
-		}
-		if (group.getGroups() != null)
-		{
-			for (Group subgroup : group.getGroups())
-			{
-				CommodityGroup grp = new CommodityGroup.Builder(subgroup.getDetails()
-					.getNames()
-					.gettextbylang("DEU")
-					.getText()).parent(parent).build();
-				parent.setHasChildren(true);
-				commgroups.put(subgroup.getUnique_id(), grp);
-				collectArticlesfromGroup(subgroup, grp);
-			}
-		}
-	}
-
-	private static String getCurrency()
-	{
-		String s = new String();
-		try
-		{
-			 s = CloudLink.getUUID(DataType.currency, "Euro");
-		}
-		catch (IOException ex)
-		{
-			UserInterface.throwPopup(
-				"Entweder stimmen die Einstellungen nicht oder es konnte keine Verbindung hergestellt werden. Überprüfen sie bitte beides.",
-				JOptionPane.ERROR_MESSAGE);
-			return null;
-		}
-		return s;
 	}
 
 }
